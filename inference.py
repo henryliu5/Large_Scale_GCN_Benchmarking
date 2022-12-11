@@ -28,7 +28,14 @@ def main(args):
         "y": y,
         "device": device,
     }
-    en_gcn.inference(input_dict)
+
+    # TODO modify this so it is more "sampling" like
+    # In reality right now this is just a dropout adj_sampling[i] * 100 % of
+    # edges in the adj matrix
+    adj_sampling = [0.1, 0.2, 0.3]
+    for dropout in adj_sampling:
+        print(f'-- Inference results, dropout {dropout} of adj matrix --')
+        en_gcn.inference(input_dict, dropout)
 
 # Call with same params as used for training
 if __name__ == "__main__":

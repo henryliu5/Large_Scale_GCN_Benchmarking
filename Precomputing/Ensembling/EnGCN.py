@@ -37,12 +37,7 @@ class EnGCN(torch.nn.Module):
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         self.adj_t = deg_inv_sqrt.view(-1, 1) * data.adj_t * deg_inv_sqrt.view(1, -1)
 
-        # TODO sample adjacency matrix (or do this in sampled_propagate)
-        adj_t_sampled = data.adj_t
-        deg = adj_t_sampled.sum(dim=1).to(torch.float)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        self.adj_t_sampled = deg_inv_sqrt.view(-1, 1) * data.adj_t * deg_inv_sqrt.view(1, -1)
+        self.data_adj_t = data.adj_t
 
         del data, deg, deg_inv_sqrt
         gc.collect()
@@ -226,7 +221,13 @@ class EnGCN(torch.nn.Module):
                         f"./.cache/{self.type_model}_{self.dataset}_MLP_SLE.pt",
                     )
 
-    def inference(self, input_dict): 
+    def inference(self, input_dict, adj_dropout): 
+        adj_t_sampled = self.neighborhood_sample(self.data_adj_t, adj_dropout)
+        deg = adj_t_sampled.sum(dim=1).to(torch.float)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        self.adj_t_sampled = deg_inv_sqrt.view(-1, 1) * self.data_adj_t * deg_inv_sqrt.view(1, -1)
+
         # Just performs inference on entire graph
         device, split_masks, x, y = (
             input_dict["device"],
@@ -270,6 +271,7 @@ class EnGCN(torch.nn.Module):
         # )
 
         for i in range(self.num_layers):
+            print('Computing layer', i)
             # # NOTE: here the num_layers should be the stages in original SAGN
             # print(f"\n------ training weak learner with hop {i} ------")
             # self.train_weak_learner(
@@ -311,8 +313,6 @@ class EnGCN(torch.nn.Module):
             #         pseudo_split_masks["train"].sum() / len(y)
             #     )
             # )
-            print('y_emb shape', y_emb.shape)
-            print('out shape', out.shape)
             # NOTE: adaboosting (SAMME.R)
             out = F.log_softmax(out, dim=1)
             results += (self.num_classes - 1) * (
@@ -335,3 +335,21 @@ class EnGCN(torch.nn.Module):
             return x.to(torch.bfloat16)
         else:
             return self.adj_t_sampled @ x
+
+    def neighborhood_sample(self, adj: SparseTensor, p):
+        # Lots of hacks to make SparseTensor work
+        # https://github.com/rusty1s/pytorch_sparse/issues/36
+        row, col, value = adj.coo()
+        # https://github.com/rusty1s/pytorch_sparse/issues/161#issuecomment-899089118
+        # index = torch.stack([row, col], dim=0)
+        # mask = value.new_full((value.size(0), ), 1 - p)
+        # mask = torch.bernoulli(mask).to(torch.bool)
+        # index, value = index[:, mask], value[mask]
+        # adj = SparseTensor(row=index[0], col=index[1], value=value, sparse_sizes=adj.sparse_sizes())
+        # return adj
+        index = torch.stack([row, col], dim=0)
+        mask = torch.full((row.size(0), ), 1 - p)
+        mask = torch.bernoulli(mask).to(torch.bool)
+        index = index[:, mask]
+        adj = SparseTensor(row=index[0], col=index[1], value=None, sparse_sizes=adj.sparse_sizes())
+        return adj
