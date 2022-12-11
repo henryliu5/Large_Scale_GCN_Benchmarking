@@ -12,6 +12,7 @@ from .WeakLearners import MLP_SLE
 
 class EnGCN(torch.nn.Module):
     def __init__(self, args, data, evaluator):
+        print('init EnGCN')
         super(EnGCN, self).__init__()
         # first try multiple weak learners
         self.model = MLP_SLE(args)
@@ -35,6 +36,13 @@ class EnGCN(torch.nn.Module):
         deg_inv_sqrt = deg.pow(-0.5)
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         self.adj_t = deg_inv_sqrt.view(-1, 1) * data.adj_t * deg_inv_sqrt.view(1, -1)
+
+        # TODO sample adjacency matrix (or do this in sampled_propagate)
+        adj_t_sampled = data.adj_t
+        deg = adj_t_sampled.sum(dim=1).to(torch.float)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        self.adj_t_sampled = deg_inv_sqrt.view(-1, 1) * data.adj_t * deg_inv_sqrt.view(1, -1)
 
         del data, deg, deg_inv_sqrt
         gc.collect()
@@ -217,3 +225,113 @@ class EnGCN(torch.nn.Module):
                         self.model.state_dict(),
                         f"./.cache/{self.type_model}_{self.dataset}_MLP_SLE.pt",
                     )
+
+    def inference(self, input_dict): 
+        # Just performs inference on entire graph
+        device, split_masks, x, y = (
+            input_dict["device"],
+            input_dict["split_masks"],
+            input_dict["x"],
+            input_dict["y"],
+        )
+        print('y.shape()', y.shape)
+        del input_dict
+        gc.collect()
+        self.to(device)
+        if self.dataset in ["ogbn-papers100M"]:
+            # y = y.to(torch.long)
+            # x = x.to(torch.bfloat16)
+            # results = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
+            # y_emb = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
+            # y_emb[split_masks["train"]] = F.one_hot(
+            #     y[split_masks["train"]], num_classes=self.num_classes
+            # ).to(torch.bfloat16)
+            # # for self training
+            # pseudo_labels = torch.zeros_like(y).to(torch.long)
+            # pseudo_labels[split_masks["train"]] = y[split_masks["train"]]
+            # pseudo_split_masks = split_masks
+            pass
+        else:
+            print(f"dtype y: {y.dtype}")
+            results = torch.zeros(y.size(0), self.num_classes)
+            y_emb = torch.zeros(y.size(0), self.num_classes)
+            y_emb[split_masks["train"]] = F.one_hot(
+                y[split_masks["train"]], num_classes=self.num_classes
+            ).to(torch.float)
+            # for self training
+            # pseudo_labels = torch.zeros_like(y)
+            # pseudo_labels[split_masks["train"]] = y[split_masks["train"]]
+            # pseudo_split_masks = split_masks
+
+        # print(
+        #     "------ pseudo labels inited, rate: {:.4f} ------".format(
+        #         pseudo_split_masks["train"].sum() / len(y)
+        #     )
+        # )
+
+        for i in range(self.num_layers):
+            # # NOTE: here the num_layers should be the stages in original SAGN
+            # print(f"\n------ training weak learner with hop {i} ------")
+            # self.train_weak_learner(
+            #     i,
+            #     x,
+            #     y_emb,
+            #     pseudo_labels,
+            #     y,  # the ground truth
+            #     pseudo_split_masks,  # ['train'] is pseudo, valide and test are not modified
+            #     device,
+            #     loss_op,
+            # )
+            # self.model.load_state_dict(
+            #     torch.load(f"./.cache/{self.type_model}_{self.dataset}_MLP_SLE.pt")
+            # )
+
+            # make prediction
+            use_label_mlp = False if i == 0 else self.use_label_mlp
+            out = self.model.inference(x, y_emb, device, use_label_mlp)
+            # self training: add hard labels
+            # val, pred = torch.max(F.softmax(out, dim=1), dim=1)
+            # SLE_mask = val >= self.SLE_threshold
+            # SLE_pred = pred[SLE_mask]
+            # SLE_pred U y
+            # pseudo_split_masks["train"] = pseudo_split_masks["train"].logical_or(
+            #     SLE_mask
+            # )
+            # pseudo_labels[SLE_mask] = SLE_pred
+            # pseudo_labels[split_masks["train"]] = y[split_masks["train"]]
+            # update y_emb
+            # y_emb[pseudo_split_masks["train"]] = F.one_hot(
+            #     pseudo_labels[pseudo_split_masks["train"]], num_classes=self.num_classes
+            # ).to(torch.float)
+            # del val, pred, SLE_mask, SLE_pred
+            gc.collect()
+            y_emb, x = self.sampled_propagate(y_emb), self.sampled_propagate(x)
+            # print(
+            #     "------ pseudo labels updated, rate: {:.4f} ------".format(
+            #         pseudo_split_masks["train"].sum() / len(y)
+            #     )
+            # )
+            print('y_emb shape', y_emb.shape)
+            print('out shape', out.shape)
+            # NOTE: adaboosting (SAMME.R)
+            out = F.log_softmax(out, dim=1)
+            results += (self.num_classes - 1) * (
+                out - torch.mean(out, dim=1).view(-1, 1)
+            )
+            del out
+
+        out, acc = self.evaluate(results, y, split_masks)
+        print(
+            f"Final train acc: {acc['train']*100:.4f}, "
+            f"Final valid acc: {acc['valid']*100:.4f}, "
+            f"Dianl test acc: {acc['test']*100:.4f}"
+        )
+        return acc["train"], acc["valid"], acc["test"]
+
+    def sampled_propagate(self, x):
+        if x.dtype == torch.bfloat16:
+            x = x.to(torch.float)
+            x = self.adj_t_sampled @ x
+            return x.to(torch.bfloat16)
+        else:
+            return self.adj_t_sampled @ x

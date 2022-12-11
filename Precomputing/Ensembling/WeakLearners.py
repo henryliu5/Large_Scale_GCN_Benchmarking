@@ -245,11 +245,12 @@ class MultiHeadBatchNorm(nn.Module):
             self.register_parameter("bias", None)
 
         self.register_buffer(
-            "running_mean", torch.zeros(size=(n_heads, in_feats // n_heads))
+            "running_mean", torch.zeros(size=(1, n_heads, in_feats // n_heads))
         )
         self.register_buffer(
-            "running_var", torch.ones(size=(n_heads, in_feats // n_heads))
+            "running_var", torch.ones(size=(1, n_heads, in_feats // n_heads))
         )
+        # print(self.running_mean.size())
         self.running_mean: Optional[Tensor]
         self.running_var: Optional[Tensor]
         self.reset_parameters()
