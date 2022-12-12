@@ -2,6 +2,7 @@ from Precomputing.Ensembling import EnGCN
 from trainer import load_data
 from options.base_options import BaseOptions
 import torch
+import time
 
 def main(args):
     (
@@ -32,10 +33,13 @@ def main(args):
     # TODO modify this so it is more "sampling" like
     # In reality right now this is just a dropout adj_sampling[i] * 100 % of
     # edges in the adj matrix
-    adj_sampling = [0.1, 0.2, 0.3]
+    adj_sampling = [0.0, 0.1, 0.2, 0.3]
     for dropout in adj_sampling:
         print(f'-- Inference results, dropout {dropout} of adj matrix --')
+        start = time.time()
         en_gcn.inference(input_dict, dropout)
+        end = time.time()
+        print('time elapsed:', end - start)
 
 # Call with same params as used for training
 if __name__ == "__main__":

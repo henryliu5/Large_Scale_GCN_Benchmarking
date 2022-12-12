@@ -226,7 +226,7 @@ class EnGCN(torch.nn.Module):
         deg = adj_t_sampled.sum(dim=1).to(torch.float)
         deg_inv_sqrt = deg.pow(-0.5)
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        self.adj_t_sampled = deg_inv_sqrt.view(-1, 1) * self.data_adj_t * deg_inv_sqrt.view(1, -1)
+        self.adj_t_sampled = deg_inv_sqrt.view(-1, 1) * adj_t_sampled * deg_inv_sqrt.view(1, -1)
 
         # Just performs inference on entire graph
         device, split_masks, x, y = (
@@ -240,13 +240,13 @@ class EnGCN(torch.nn.Module):
         gc.collect()
         self.to(device)
         if self.dataset in ["ogbn-papers100M"]:
-            # y = y.to(torch.long)
-            # x = x.to(torch.bfloat16)
-            # results = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
-            # y_emb = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
-            # y_emb[split_masks["train"]] = F.one_hot(
-            #     y[split_masks["train"]], num_classes=self.num_classes
-            # ).to(torch.bfloat16)
+            y = y.to(torch.long)
+            x = x.to(torch.bfloat16)
+            results = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
+            y_emb = torch.zeros((y.size(0), self.num_classes), dtype=torch.bfloat16)
+            y_emb[split_masks["train"]] = F.one_hot(
+                y[split_masks["train"]], num_classes=self.num_classes
+            ).to(torch.bfloat16)
             # # for self training
             # pseudo_labels = torch.zeros_like(y).to(torch.long)
             # pseudo_labels[split_masks["train"]] = y[split_masks["train"]]
